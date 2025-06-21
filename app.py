@@ -72,10 +72,7 @@ if uploaded_file is not None:
         y_pred = model.predict(X_test)
         overall_accuracy = accuracy_score(y_test, y_pred)
         
-        st.write(f"🎯 **Overall Accuracy:** `{overall_accuracy:.2f}`")
-        
         X_test[sensitive_column] = sensitive_test
-
 
         group_accuracies = []
         for group in X_test[sensitive_column].unique():
@@ -86,13 +83,65 @@ if uploaded_file is not None:
      
         accuracies_only = [acc for _, acc in group_accuracies]
         bias_gap = max(accuracies_only) - min(accuracies_only)
+        variance = np.var(accuracies_only)
 
-        st.subheader("📉 Bias Summary")
+        st.subheader("📉 Bias & Variance Summary")
+
+        st.write(f"🎯 Overall Accuracy: `{accuracy_score(y_test, y_pred):.2f}`")
         st.write(f"🔺 **Bias Gap (Max - Min Accuracy):** `{bias_gap:.2f}`")
+        st.write(f"📈 **Variance Across Groups:** `{variance:.4f}`")
 
         if bias_gap > 0.2:
-            st.error("⚠️ High bias detected! Consider rebalancing your dataset or using fairness-aware algorithms.")
+            st.error("⚠️ High bias detected! Consider mitigation strategies.")
         elif bias_gap > 0.1:
-            st.warning("⚠️ Moderate bias detected. You may want to investigate further.")
+            st.warning("⚠️ Moderate bias detected.")
         else:
-            st.success("✅ Low bias. The model is performing fairly across groups.")
+            st.success("✅ Low bias. Model is performing fairly across groups.")
+            
+            
+        if variance > 0.02:
+            st.error("⚠️ High variance across groups – model performance is inconsistent.")
+        elif variance > 0.01:
+            st.warning("⚠️ Moderate variance across groups.")
+        else:
+            st.success("✅ Low variance – model is consistent across groups.")
+            
+        if bias_gap > 0.2 or variance > 0.02:
+            st.subheader("🛠️ Bias Mitigation Suggestions")
+            st.markdown("""
+        - **Re-sampling**: Try oversampling underrepresented groups (like using SMOTE) or undersampling the dominant group.
+        - **Reweighting**: Assign different weights to samples from different sensitive groups during model training.
+        - **Fair Classifiers**: Use algorithms like `fairlearn`, `aif360`, or `fairboost` that build fairness directly into models.
+        - **Feature Removal**: Remove sensitive attributes or correlated proxies if they leak bias.
+        - **Threshold Adjustment**: Post-process predictions and adjust thresholds per group to equalize outcomes.
+            """)
+
+            st.info("📌 Tip: You can explore packages like `Fairlearn`, `AIF360`, or `FairXGBoost` to implement these methods.")
+
+        
+        top_sensitive_values = df[sensitive_column].value_counts().nlargest(10).index
+        filtered_df = df[df[sensitive_column].isin(top_sensitive_values)]
+
+        # Convert target to numeric if needed
+        if filtered_df[target_column].dtype == 'object':
+            filtered_df[target_column] = filtered_df[target_column].astype('category').cat.codes
+
+        # Group and plot
+        filtered_df[sensitive_column] = filtered_df[sensitive_column].apply(lambda x: str(x)[:40] + "..." if len(str(x)) > 40 else str(x))
+
+        group_means = filtered_df.groupby(sensitive_column)[target_column].mean()
+        st.subheader("📊 Visualization: Sensitive vs Target Column")
+        fig, ax = plt.subplots(figsize=(12, 5))
+        group_means.plot(kind='bar', ax=ax, color='skyblue', edgecolor='black')
+        ax.set_ylabel(f"Mean {target_column}")
+        ax.set_title(f"Mean {target_column} by {sensitive_column}")
+        ax.tick_params(axis='x', labelrotation=45, labelsize=9)
+        
+        for i, v in enumerate(group_means):
+            ax.text(i, v + 0.02, f"{v:.2f}", ha='center', va='bottom', fontsize=8)
+        
+        st.pyplot(fig)
+
+
+
+        
