@@ -6,6 +6,18 @@ import streamlit as st
 from sklearn.metrics import accuracy_score
 from sklearn.model_selection import train_test_split
 from sklearn.linear_model import LogisticRegression
+from sklearn.tree import DecisionTreeClassifier
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.svm import SVC
+from sklearn.neighbors import KNeighborsClassifier
+models = {
+    "Logistic Regression": LogisticRegression(max_iter=1000),
+    "Decision Tree": DecisionTreeClassifier(),
+    "Random Forest": RandomForestClassifier(),
+    "Support Vector Machine": SVC(),
+    "K-Nearest Neighbors": KNeighborsClassifier()
+}
+
 
 
 
@@ -39,34 +51,52 @@ if uploaded_file is not None:
     sensitive_column = st.selectbox("Choose the sensitive attribute", df.columns)
 
     st.success(f"Target: {target_column} | Sensitive Feature: {sensitive_column}")
+    
+    
+    st.subheader("🤖 Choose Model for Training")
+    model_name = st.selectbox("Select ML Model", [
+        "Logistic Regression", 
+        "Decision Tree", 
+        "Random Forest", 
+        "Support Vector Machine", 
+        "K-Nearest Neighbors"
+        ])
 
+    if(model_name=='Logistic Regression'):
+            model = LogisticRegression(max_iter=1000)
+    elif(model_name=='Decision Tree'):
+            model = DecisionTreeClassifier()
+    elif(model_name=='Random Forest'):
+            model = RandomForestClassifier()
+    elif(model_name=='Support Vector Machine'):
+            model = SVC()
+    elif(model_name=='K-Nearest Neighbors'):
+            model = KNeighborsClassifier()
 
-    if st.button("Train and Analyze Bias"):
-            # 1. Separate target and sensitive feature
-        y = df[target_column]
-        sensitive = df[sensitive_column]
+    y = df[target_column]
+    sensitive = df[sensitive_column]
 
-        # 2. Drop target and sensitive column to get features
-        X = df.drop([target_column, sensitive_column], axis=1)
+    # 2. Drop target and sensitive column to get features
+    X = df.drop([target_column, sensitive_column], axis=1)
 
-        # 3. Convert categorical features to numeric
-        X = pd.get_dummies(X, drop_first=True)
+    # 3. Convert categorical features to numeric
+    X = pd.get_dummies(X, drop_first=True)
 
-        # 4. Encode sensitive column if it's categorical (for grouping)
-        if sensitive.dtype == 'object':
-            sensitive = sensitive.astype('category').cat.codes
+    # 4. Encode sensitive column if it's categorical (for grouping)
+    if sensitive.dtype == 'object':
+         sensitive = sensitive.astype('category').cat.codes
         
-        st.success("✅ Data preprocessed successfully! Ready for model training.")
+    st.success("✅ Data preprocessed successfully! Ready for model training.")
         
-        X_train, X_test, y_train, y_test, sensitive_train, sensitive_test = train_test_split(
+    X_train, X_test, y_train, y_test, sensitive_train, sensitive_test = train_test_split(
             X, y, sensitive, test_size=0.2, random_state=42
         )
 
-        X_test = X_test.reset_index(drop=True)
-        y_test = y_test.reset_index(drop=True)
-        sensitive_test = sensitive_test.reset_index(drop=True)
+    X_test = X_test.reset_index(drop=True)
+    y_test = y_test.reset_index(drop=True)
+    sensitive_test = sensitive_test.reset_index(drop=True)
 
-        model = LogisticRegression(max_iter=1000)
+    if st.button("Train and Analyze Bias"):
         model.fit(X_train, y_train)
         
         y_pred = model.predict(X_test)
@@ -143,5 +173,47 @@ if uploaded_file is not None:
         st.pyplot(fig)
 
 
-
+    if (st.button("Train and Compare all models")):
+        comparison_results=[]
         
+        for model_name,model in models.items():
+            try:
+                model.fit(X_train,y_train)
+                y_pred = model.predict(X_test)
+                acc = accuracy_score(y_test,y_pred)
+                
+                group_accuracies=[]
+                for group in sensitive_test.unique():
+                    idx = sensitive_test[sensitive_test==group].index
+                    group_acc = accuracy_score(y_test.iloc[idx],y_pred[idx])
+                    group_accuracies.append(group_acc)
+                    
+                bias_gap = max(group_accuracies)-min(group_accuracies)
+                variance = np.var(group_accuracies)
+                
+                comparison_results.append({
+                    "Model":model_name , 
+                    "Accuracy":round(acc,3),
+                    "Bias Gap":round(bias_gap,3),
+                    "Variance":round(variance,3),
+                })
+                
+            except Exception as e:
+                st.error(f"Model {model_name} failed: {str(e)}")
+                
+            
+        st.subheader("📊 Model Comparison Results")
+        result_df = pd.DataFrame(comparison_results)
+        st.dataframe(result_df.sort_values(by="Bias Gap", ascending=True).reset_index(drop=True))        
+        
+        if not result_df.empty:
+            best_model = result_df.loc[result_df['Bias Gap'].idxmin()]
+            st.success(f"Lowest Bias:'{best_model['Model']}' with Bias Gap = '{best_model['Bias Gap']}'")
+            
+        st.subheader("📊 Visual Comparison of Models")
+        fig, ax = plt.subplots(figsize=(10, 5))
+        result_df.plot(x="Model", y=["Bias Gap", "Variance"], kind="bar", ax=ax)
+        plt.xticks(rotation=45)
+        plt.ylabel("Metric Value")
+        plt.title("Bias Gap and Variance Comparison Across Models")
+        st.pyplot(fig)
