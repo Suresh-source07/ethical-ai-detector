@@ -3,6 +3,7 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import seaborn as sns
 import streamlit as st
+import shap
 from sklearn.metrics import accuracy_score
 from sklearn.model_selection import train_test_split
 from sklearn.linear_model import LogisticRegression
@@ -76,18 +77,26 @@ if uploaded_file is not None:
     y = df[target_column]
     sensitive = df[sensitive_column]
 
-    # 2. Drop target and sensitive column to get features
+    # Drop target and sensitive columns from features
     X = df.drop([target_column, sensitive_column], axis=1)
 
-    # 3. Convert categorical features to numeric
+    # Convert categorical features to numeric
     X = pd.get_dummies(X, drop_first=True)
 
-    # 4. Encode sensitive column if it's categorical (for grouping)
-    if sensitive.dtype == 'object':
-         sensitive = sensitive.astype('category').cat.codes
-        
-    st.success("✅ Data preprocessed successfully! Ready for model training.")
-        
+    # Encode target if it's not numeric (important for model training)
+    if y.dtype == 'object' or str(y.dtype).startswith('category'):
+        y = y.astype('category').cat.codes
+
+    # Encode sensitive column if it's categorical
+    if sensitive.dtype == 'object' or str(sensitive.dtype).startswith('category'):
+        sensitive = sensitive.astype('category').cat.codes
+
+    # Handle any NaN or infinite values
+    X = X.replace([np.inf, -np.inf], np.nan).dropna()
+    y = y.loc[X.index]
+    sensitive = sensitive.loc[X.index]
+
+
     X_train, X_test, y_train, y_test, sensitive_train, sensitive_test = train_test_split(
             X, y, sensitive, test_size=0.2, random_state=42
         )
@@ -96,21 +105,39 @@ if uploaded_file is not None:
     y_test = y_test.reset_index(drop=True)
     sensitive_test = sensitive_test.reset_index(drop=True)
 
+
+    if "trained" not in st.session_state:
+        st.session_state.trained = False
+    
     if st.button("Train and Analyze Bias"):
         model.fit(X_train, y_train)
-        
+        explainer = shap.Explainer(model, X_train)
+        shap_values = explainer(X_test)
         y_pred = model.predict(X_test)
+
+        # Store in session_state
+        st.session_state.trained = True
+        st.session_state.model = model
+        st.session_state.shap_values = shap_values
+        st.session_state.X_test = X_test
+        st.session_state.y_test = y_test
+        st.session_state.sensitive_test = sensitive_test
+        st.session_state.sensitive_column = sensitive_column
+        st.session_state.df = df
+        st.session_state.target_column = target_column
+
         overall_accuracy = accuracy_score(y_test, y_pred)
-        
-        X_test[sensitive_column] = sensitive_test
+
+
+        X_test_for_bias = X_test.copy()
+        X_test_for_bias[sensitive_column] = sensitive_test
 
         group_accuracies = []
-        for group in X_test[sensitive_column].unique():
-            idx = X_test[X_test[sensitive_column] == group].index
+        for group in X_test_for_bias[sensitive_column].unique():
+            idx = X_test_for_bias[X_test_for_bias[sensitive_column] == group].index
             acc = accuracy_score(y_test.loc[idx], y_pred[idx])
             group_accuracies.append((group, acc))
 
-     
         accuracies_only = [acc for _, acc in group_accuracies]
         bias_gap = max(accuracies_only) - min(accuracies_only)
         variance = np.var(accuracies_only)
@@ -171,6 +198,27 @@ if uploaded_file is not None:
             ax.text(i, v + 0.02, f"{v:.2f}", ha='center', va='bottom', fontsize=8)
         
         st.pyplot(fig)
+    if st.session_state.trained:
+        shap_values = st.session_state.shap_values
+        X_test = st.session_state.X_test
+        y_test = st.session_state.y_test
+        sensitive_test = st.session_state.sensitive_test
+        sensitive_column = st.session_state.sensitive_column
+        df = st.session_state.df
+        target_column = st.session_state.target_column
+
+        st.subheader("🔍 Global Feature Importance (SHAP)")
+        fig, ax = plt.subplots()
+        shap.plots.bar(shap_values, show=False)
+        st.pyplot(fig)
+
+        sample_idx = st.slider("Pick a test sample to explain", 0, len(X_test)-1, 0)
+        st.subheader(f"🔎 SHAP Explanation for Sample {sample_idx}")
+        fig2, ax2 = plt.subplots()
+        shap.plots.waterfall(shap_values[sample_idx], show=False)
+        st.pyplot(fig2)
+
+
 
 
     if (st.button("Train and Compare all models")):
@@ -204,16 +252,32 @@ if uploaded_file is not None:
             
         st.subheader("📊 Model Comparison Results")
         result_df = pd.DataFrame(comparison_results)
-        st.dataframe(result_df.sort_values(by="Bias Gap", ascending=True).reset_index(drop=True))        
-        
-        if not result_df.empty:
+
+        if not result_df.empty and "Bias Gap" in result_df.columns:
+            st.dataframe(result_df.sort_values(by="Bias Gap", ascending=True).reset_index(drop=True))        
+
             best_model = result_df.loc[result_df['Bias Gap'].idxmin()]
-            st.success(f"Lowest Bias:'{best_model['Model']}' with Bias Gap = '{best_model['Bias Gap']}'")
+            st.success(f"Lowest Bias: '{best_model['Model']}' with Bias Gap = '{best_model['Bias Gap']}'")
+
+            st.subheader("📊 Visual Comparison of Models")
+            fig, ax = plt.subplots(figsize=(10, 5))
+            result_df.plot(x="Model", y=["Bias Gap", "Variance"], kind="bar", ax=ax)
+            plt.xticks(rotation=45)
+            plt.ylabel("Metric Value")
+            plt.title("Bias Gap and Variance Comparison Across Models")
+            st.pyplot(fig)
+        else:
+            st.warning("⚠️ No model comparison data available. All models may have failed.")
             
-        st.subheader("📊 Visual Comparison of Models")
-        fig, ax = plt.subplots(figsize=(10, 5))
-        result_df.plot(x="Model", y=["Bias Gap", "Variance"], kind="bar", ax=ax)
-        plt.xticks(rotation=45)
-        plt.ylabel("Metric Value")
-        plt.title("Bias Gap and Variance Comparison Across Models")
-        st.pyplot(fig)
+                
+            if not result_df.empty:
+                best_model = result_df.loc[result_df['Bias Gap'].idxmin()]
+                st.success(f"Lowest Bias:'{best_model['Model']}' with Bias Gap = '{best_model['Bias Gap']}'")
+                    
+                st.subheader("📊 Visual Comparison of Models")
+                fig, ax = plt.subplots(figsize=(10, 5))
+                result_df.plot(x="Model", y=["Bias Gap", "Variance"], kind="bar", ax=ax)
+                plt.xticks(rotation=45)
+                plt.ylabel("Metric Value")
+                plt.title("Bias Gap and Variance Comparison Across Models")
+                st.pyplot(fig)
