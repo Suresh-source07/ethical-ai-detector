@@ -68,14 +68,15 @@ ethical-ai-detector/
 💾 Save sessions for future comparison
 
 
+## 📊 Output
+The tool generates group-wise performance comparison and highlights potential bias gaps.
+
+## 🚀 Live Demo
+HuggingFace Space: https://huggingface.co/spaces/wiser08/Ethical_AI_Detector
+
 
 🙋‍♂️ Author
-Kush Suri
-
-🧠 AI/ML Student
-
-💼 Building ethical AI projects
-
+Suresh Suri
 📫 [https://www.linkedin.com/in/suresh-suri-70b8a2272/] 
 
 
