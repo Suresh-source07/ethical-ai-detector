@@ -4,3 +4,9 @@ __pycache__/
 *.csv 
 *.mp4 
 *.log 
+venv/
+.venv/
+__pycache__/
+*.pyc
+.DS_Store
+
